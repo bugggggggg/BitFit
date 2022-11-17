@@ -3,3 +3,8 @@
 *.ipynb_checkpoints*
 *__pycache__*
 test
+model
+*.pdf
+idea
+
+test.__pycache__

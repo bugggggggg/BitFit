@@ -1,10 +1,6 @@
-"""This file contains the GLUEvaluator class which exposes an API for all the evaluations that were performed in
-BitFit paper (https://arxiv.org/abs/1804.07461), such as: 'full_ft', 'bitfit', 'frozen', 'rand_uniform' and
-'rand_row_col'.
+"""
 
-For questions please reach: benzakenelad@gmail.com
-
-Author Elad Ben-Zaken
+python run_glue.py --gpu-device=0
 """
 
 import os
@@ -24,7 +20,7 @@ from torch.optim import Adam
 from torch.utils.data import TensorDataset, DataLoader, RandomSampler, SequentialSampler
 from datasets import load_dataset
 from transformers.optimization import AdamW
-from transformers import AutoTokenizer, AutoModelForSequenceClassification, AutoConfig
+from transformers import AutoTokenizer, AutoModelForSequenceClassification, AutoConfig, DistilBertForSequenceClassification
 from datasets.arrow_dataset import Dataset
 
 from utils import setup_logging
@@ -116,6 +112,16 @@ BIAS_LAYER_NAME_TO_LATEX = {
     'output.LayerNorm.bias': '$\mathbf{b}_{LN_2}^{\ell}$',
 }
 
+DISTILLBERT_BIAS_LAYER_NAME_TO_LATEX = {
+    'attention.q_lin.bias': '$\mathbf{b}_{q}^{\ell}$',
+    'attention.k_lin.bias': '$\mathbf{b}_{k}^{\ell}$',
+    'attention.v_lin.bias': '$\mathbf{b}_{v}^{\ell}$',
+    'attention.out_lin.bias': '$\mathbf{b}_{m_1}^{\ell}$',
+    'sa_layer_norm.bias': '$\mathbf{b}_{LN_1}^{\ell}$',
+    'ffn.lin1.bias': '$\mathbf{b}_{LN1}^{\ell}$',
+    'ffn.lin2.bias': '$\mathbf{b}_{LN2}^{\ell}$',
+    'output_layer_norm.bias': '$\mathbf{b}_{LN_2}^{\ell}$',
+}
 
 class GLUEvaluator:
     """This class contains all the functionality for GLUE benchmark evaluations that were performed in BitFit paper.
@@ -237,6 +243,8 @@ class GLUEvaluator:
         # model declaration
         config = AutoConfig.from_pretrained(self.model_name, num_labels=self.num_labels, return_dict=True)
         self.model = AutoModelForSequenceClassification.from_pretrained(self.model_name, config=config)
+        # print(self.model)
+        # exit()
         if not encoder_trainable:
             self._deactivate_relevant_gradients(trainable_components)
 
@@ -456,7 +464,10 @@ class GLUEvaluator:
         if output_path:
             LOGGER.info(f'Saving the BitFit bias terms changes to: {output_path}')
 
-        if 'roberta' in self.model_name:
+        if 'distilbert' in self.model_name:
+            base_model = DistilBertForSequenceClassification.from_pretrained(self.model_name, return_dict=True).distilbert
+            fine_tuned_model = self.model.cpu().distilbert
+        elif 'roberta' in self.model_name:
             base_model = AutoModelForSequenceClassification.from_pretrained(self.model_name, return_dict=True).roberta
             fine_tuned_model = self.model.cpu().roberta
         else:
@@ -476,7 +487,7 @@ class GLUEvaluator:
                         changes.append({'name': ft_name, 'value': _calc_mean_diff(ft_param, base_param)})
 
         def _get_component_name(name):
-            return re.split(r'.[0-9]+.', name)[1]
+            return re.split(r'.[0-9]+.', name, maxsplit=1)[1]
 
         def _get_component_layer(name):
             return int(name.split('.')[2])
@@ -504,7 +515,10 @@ class GLUEvaluator:
         xticklabels = [f'layer {i + 1}' for i in range(num_layers)]
         xticklabels.append('Avg.')
 
-        keys = [BIAS_LAYER_NAME_TO_LATEX[key] for key in keys]
+        if 'distilbert' in self.model_name:
+            keys = [DISTILLBERT_BIAS_LAYER_NAME_TO_LATEX[key] for key in keys]
+        else:
+            keys = [BIAS_LAYER_NAME_TO_LATEX[key] for key in keys]
         heatmap(values_map, cmap="Blues", ax=ax, yticklabels=keys, xticklabels=xticklabels)
 
         plt.xticks(rotation=45)
@@ -621,6 +635,11 @@ class GLUEvaluator:
         if trainable_components:
             trainable_components = trainable_components + ['pooler.dense.bias']
         trainable_components = trainable_components + ['classifier']
+        # print(trainable_components)
+        # for name, param in self.model.named_parameters():
+        #     print(name)
+        # exit()
+
         for name, param in self.model.named_parameters():
             for component in trainable_components:
                 if component in name:
@@ -654,14 +673,17 @@ class GLUEvaluator:
             if self.device is not None:
                 batch = tuple(obj.cuda(self.device) for obj in batch)
 
-            if 'roberta' in self.model_name:
+            if 'roberta' or 'distilbert' in self.model_name:
                 input_ids, attention_mask, labels = batch
                 token_type_ids = None
             else:
                 input_ids, attention_mask, token_type_ids, labels = batch
 
             # forward pass
-            outputs = self.model(input_ids=input_ids, attention_mask=attention_mask, token_type_ids=token_type_ids)
+            if 'distilbert' in self.model_name:
+                outputs = self.model(input_ids=input_ids, attention_mask=attention_mask)
+            else:
+                outputs = self.model(input_ids=input_ids, attention_mask=attention_mask, token_type_ids=token_type_ids)
             outputs = outputs.logits
 
             # loss calculation
@@ -717,7 +739,7 @@ class GLUEvaluator:
             if self.device is not None:
                 batch = tuple(obj.cuda(self.device) for obj in batch)
 
-            if 'roberta' in self.model_name:
+            if 'roberta' or 'distilbert-base-uncased' in self.model_name:
                 input_ids, attention_mask, labels = batch
                 token_type_ids = None
             else:
@@ -725,7 +747,10 @@ class GLUEvaluator:
 
             # forward pass
             with torch.no_grad():
-                outputs = self.model(input_ids=input_ids, attention_mask=attention_mask, token_type_ids=token_type_ids)
+                if 'distilbert-base-uncased' in self.model_name:
+                    outputs = self.model(input_ids=input_ids, attention_mask=attention_mask)
+                else:
+                    outputs = self.model(input_ids=input_ids, attention_mask=attention_mask, token_type_ids=token_type_ids)
                 outputs = outputs.logits
 
             # reshaping
@@ -779,7 +804,7 @@ class GLUEvaluator:
         else:
             keys = ['input_ids', 'attention_mask', 'token_type_ids', 'label']
 
-        if 'roberta' in model_name:
+        if 'roberta' or 'distilbert' in model_name:
             keys.remove('token_type_ids')
 
         data = {key: list() for key in keys}
