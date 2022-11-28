@@ -4,7 +4,8 @@ import logging
 from utils import setup_logging
 from glue_evaluator import GLUEvaluator, set_seed
 
-
+# python run_glue.py -f full_ft -l 0.00001
+# python run_glue.py -l 0.00001
 
 setup_logging()
 LOGGER = logging.getLogger(__file__)
@@ -21,6 +22,7 @@ def _parse_args():
 
     parser.add_argument('--output-path', '-o', type=str, default='output', 
                         help='output directory path for evaluation products.')
+    ## mrpc
     parser.add_argument('--task-name', '-t', type=str, default='sst2', help='GLUE task name for evaluation.',
                         choices={'cola', 'mnli', 'mrpc', 'qnli', 'qqp', 'rte', 'sst2', 'stsb', 'wnli'})
     parser.add_argument('--model-name', '-m', type=str, default='distilbert-base-uncased', help='model-name to evaluate with.', 
@@ -38,9 +40,9 @@ def _parse_args():
     parser.add_argument('--gpu-device', '-d', type=int, default=0,
                         help='GPU id for BitFit, if not mentioned will train on CPU.')
     parser.add_argument('--seed', '-s', type=int, default=0, help='seed value to set.')
-    parser.add_argument('--learning-rate', '-l', type=float, default=1e-3, help='learning rate for training.')
+    parser.add_argument('--learning-rate', '-l', type=float, default=1e-3, help='learning rate for training.') #######
     parser.add_argument('--epochs', '-e', type=int, default=16, help='number of training epochs.')
-    parser.add_argument('--batch-size', '-b', type=int, default=8, help='training and evaluation batch size.')
+    parser.add_argument('--batch-size', '-b', type=int, default=16, help='training and evaluation batch size.') #####
     parser.add_argument('--optimizer', type=str, default='adamw', choices={'adam', 'adamw'})
     parser.add_argument('--save-evaluator', action='store_true', default=True,
                         help='if given, will save the evaluator for later inference/examination.')
@@ -125,6 +127,9 @@ def _perform_training_preparations(evaluator, args, trainable_components):
 def main():
     # args parsing
     args = _parse_args()
+    bias_name = '-'.join(args.bias_terms)
+    args.output_path = f'{args.output_path}/{args.model_name}_{args.task_name}_{args.fine_tune_type}_{bias_name}_{args.epochs}'
+
     _validate_args(args)
     _plot_training_details(args)
 

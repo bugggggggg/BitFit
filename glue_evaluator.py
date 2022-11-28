@@ -116,11 +116,11 @@ DISTILLBERT_BIAS_LAYER_NAME_TO_LATEX = {
     'attention.q_lin.bias': '$\mathbf{b}_{q}^{\ell}$',
     'attention.k_lin.bias': '$\mathbf{b}_{k}^{\ell}$',
     'attention.v_lin.bias': '$\mathbf{b}_{v}^{\ell}$',
-    'attention.out_lin.bias': '$\mathbf{b}_{m_1}^{\ell}$',
-    'sa_layer_norm.bias': '$\mathbf{b}_{LN_1}^{\ell}$',
+    'attention.out_lin.bias': '$\mathbf{b}_{oLN_1}^{\ell}$',
+    'sa_layer_norm.bias': '$\mathbf{b}_{norm_1}^{\ell}$',
     'ffn.lin1.bias': '$\mathbf{b}_{LN1}^{\ell}$',
     'ffn.lin2.bias': '$\mathbf{b}_{LN2}^{\ell}$',
-    'output_layer_norm.bias': '$\mathbf{b}_{LN_2}^{\ell}$',
+    'output_layer_norm.bias': '$\mathbf{b}_{LN_norm_2}^{\ell}$',
 }
 
 class GLUEvaluator:
@@ -392,11 +392,17 @@ class GLUEvaluator:
                 if self.device is not None:
                     batch = tuple(obj.cuda(self.device) for obj in batch)
 
-                input_ids, attention_mask, token_type_ids = batch
+                if 'distilbert' in self.model_name:
+                    input_ids, attention_mask = batch
+                else:
+                    input_ids, attention_mask, token_type_ids = batch
 
                 # forward pass
                 with torch.no_grad():
-                    outputs = self.model(input_ids=input_ids, attention_mask=attention_mask,
+                    if 'distilbert' in self.model_name:
+                        outputs = self.model(input_ids=input_ids, attention_mask=attention_mask)
+                    else:
+                        outputs = self.model(input_ids=input_ids, attention_mask=attention_mask,
                                          token_type_ids=token_type_ids)
                     outputs = outputs.logits
 
@@ -419,6 +425,7 @@ class GLUEvaluator:
             print('')
 
             # save the test set results (in "GLUE test server" format)
+            print(prediction_file_name)
             with open(os.path.join(output_path, prediction_file_name), 'w') as file:
                 file.write('index\tprediction\n')
                 for idx, result in enumerate(results):
@@ -807,8 +814,12 @@ class GLUEvaluator:
         if 'roberta' or 'distilbert' in model_name:
             keys.remove('token_type_ids')
 
+        # cnt = 100
         data = {key: list() for key in keys}
-        for sample in dataset:
+        for sample in dataset:      
+            # cnt -= 1
+            # if test and cnt > 0:
+            #     print(sample['label'])
             for key in keys:
                 data[key].append(sample[key])
 
@@ -818,3 +829,6 @@ class GLUEvaluator:
         tensor_dataset = TensorDataset(*[data[key] for key in keys])
         data_sampler = RandomSampler(tensor_dataset) if random_sampler else SequentialSampler(tensor_dataset)
         return DataLoader(tensor_dataset, sampler=data_sampler, batch_size=batch_size)
+
+
+
